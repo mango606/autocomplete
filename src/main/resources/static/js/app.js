@@ -2,6 +2,7 @@ let searchHistory = [];
 let currentSuggestionIndex = -1;
 let totalSearchCount = 0;
 let todaySearchCount = 0;
+let isSearching = false;
 
 // DOM 요소
 const searchInput = document.getElementById('searchInput');
@@ -51,8 +52,6 @@ async function updateCacheStats() {
         const stats = await response.json();
 
         document.getElementById('cachedQueries').textContent = stats.cachedQueries;
-
-        console.log('Cache stats updated:', stats);
 
         if (stats.error) {
             console.error('Cache stats error:', stats.error);
@@ -145,10 +144,7 @@ async function refreshPopularQueries() {
                 <span class="popular-count">${count}회</span>
             `;
 
-            item.addEventListener('click', () => {
-                searchInput.value = query;
-                performSearch(query);
-            });
+            // 중요: 여기서는 이벤트를 등록하지 않음 (이벤트 위임 사용)
 
             popularGrid.appendChild(item);
             rank++;
@@ -163,6 +159,13 @@ async function performSearch(query) {
     if (!query || query.trim().length === 0) {
         return;
     }
+
+    // 중복 실행 방지
+    if (isSearching) {
+        return;
+    }
+
+    isSearching = true;
 
     try {
         const response = await fetch('/api/search', {
@@ -193,6 +196,8 @@ async function performSearch(query) {
     } catch (error) {
         console.error('검색 실패:', error);
         showNotification('검색 중 오류가 발생했습니다', 'error');
+    } finally {
+        isSearching = false;
     }
 }
 
@@ -246,7 +251,7 @@ function displayHistory() {
 // 통계 업데이트
 function updateStats() {
     document.getElementById('totalSearches').textContent = totalSearchCount;
-    document.getElementById('todaySearches').textContent = todaySearchCount;  // 🆕 변경
+    document.getElementById('todaySearches').textContent = todaySearchCount;
 
     animateNumber('totalSearches');
     animateNumber('todaySearches');
@@ -380,7 +385,7 @@ document.addEventListener('DOMContentLoaded', () => {
     displayHistory();
     updateCacheStats();
 
-    // 인기 검색어 클릭 이벤트
+    // 인기 검색어 클릭 이벤트 (이벤트 위임, 한 번만 등록)
     document.querySelector('.popular-grid').addEventListener('click', (e) => {
         const popularItem = e.target.closest('.popular-item');
         if (popularItem) {
@@ -397,8 +402,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-// 업데이트
+// 주기적 업데이트 (30초마다)
 setInterval(() => {
     refreshPopularQueries();
     updateCacheStats();
-}, 30000); // 30초마다
+}, 30000);

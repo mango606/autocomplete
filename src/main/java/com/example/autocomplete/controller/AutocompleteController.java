@@ -62,22 +62,14 @@ public class AutocompleteController {
     @ResponseBody
     public ResponseEntity<Map<String, Object>> getCacheStats() {
         try {
-            Set<String> keys1 = redisTemplate.keys("autocomplete::*");
-            Set<String> keys2 = redisTemplate.keys("autocomplete:*");
-            Set<String> keys3 = redisTemplate.keys("*autocomplete*");
+            Set<String> cacheKeys = redisTemplate.keys("autocomplete::*");
+            int cacheCount = (cacheKeys != null) ? cacheKeys.size() : 0;
 
-            int cacheCount = 0;
-            if (keys1 != null && !keys1.isEmpty()) {
-                cacheCount = keys1.size();
-            } else if (keys2 != null && !keys2.isEmpty()) {
-                cacheCount = keys2.size();
-            } else if (keys3 != null && !keys3.isEmpty()) {
-                cacheCount = keys3.size();
-            } else {
-                log.warn("No cache keys found in Redis");
-            }
+            // 검색 빈도수 키는 별도로 카운트
+            Set<String> frequencyKeys = redisTemplate.keys("query:frequency:*");
+            int totalQueries = (frequencyKeys != null) ? frequencyKeys.size() : 0;
 
-            int totalQueries = autocompleteService.getPopularQueries(1000).size();
+            log.debug("Cache keys found: {}, Frequency keys found: {}", cacheCount, totalQueries);
 
             return ResponseEntity.ok(Map.of(
                     "cachedQueries", cacheCount,
