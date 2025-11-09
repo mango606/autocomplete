@@ -4,12 +4,14 @@ import com.example.autocomplete.domain.SearchQuery;
 import com.example.autocomplete.domain.Trie;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
@@ -26,17 +28,42 @@ public class AutocompleteService {
         this.trie = new Trie();
         this.redisTemplate = redisTemplate;
         this.queryFrequencyMap = new ConcurrentHashMap<>();
-        initializeSampleData();
     }
 
     @PostConstruct
-    public void initializeSampleData() {
-        // 샘플 데이터
+    public void initializeData() {
+        // Redis에서 기존 빈도수 데이터 로드
+        loadFromRedis();
+
+        // Redis에 데이터가 없으면 샘플 데이터로 초기화
+        if (queryFrequencyMap.isEmpty()) {
+            initializeSampleData();
+        }
+    }
+
+    private void loadFromRedis() {
+        Set<String> keys = redisTemplate.keys(QUERY_FREQUENCY_KEY + "*");
+        if (keys != null && !keys.isEmpty()) {
+            for (String key : keys) {
+                String query = key.substring(QUERY_FREQUENCY_KEY.length());
+                Object value = redisTemplate.opsForValue().get(key);
+
+                if (value instanceof Number) {
+                    int frequency = ((Number) value).intValue();
+                    trie.insert(query, frequency);
+                    queryFrequencyMap.put(query, frequency);
+                }
+            }
+            log.info("Loaded {} queries from Redis", queryFrequencyMap.size());
+        }
+    }
+
+    private void initializeSampleData() {
         List<SearchQuery> sampleQueries = List.of(
                 new SearchQuery("스프링 부트", 5000, 150),
                 new SearchQuery("스프링 클라우드", 4500, 120),
                 new SearchQuery("스프링 시큐리티", 4000, 100),
-                new SearchQuery("스프링 데이터 JPA", 3500, 95),
+                new SearchQuery("스프링 데이터 jpa", 3500, 95),
                 new SearchQuery("스프링 배치", 3000, 80),
                 new SearchQuery("자바 21", 6000, 200),
                 new SearchQuery("자바 스트림", 5500, 180),
@@ -61,14 +88,19 @@ public class AutocompleteService {
         );
 
         for (SearchQuery query : sampleQueries) {
-            trie.insert(query.getQuery(), query.getFrequency());
-            queryFrequencyMap.put(query.getQuery(), query.getFrequency());
+            String normalizedQuery = query.getQuery().toLowerCase();
+            trie.insert(normalizedQuery, query.getFrequency());
+            queryFrequencyMap.put(normalizedQuery, query.getFrequency());
+
+            // Redis에도 저장
+            String key = QUERY_FREQUENCY_KEY + normalizedQuery;
+            redisTemplate.opsForValue().set(key, query.getFrequency());
         }
 
         log.info("Initialized {} sample queries", sampleQueries.size());
     }
 
-    @Cacheable(value = "autocomplete", key = "#prefix")
+    @Cacheable(value = "autocomplete", key = "#prefix.toLowerCase()")
     public List<String> getSuggestions(String prefix) {
         if (prefix == null || prefix.trim().isEmpty()) {
             return List.of();
@@ -78,6 +110,7 @@ public class AutocompleteService {
         return trie.search(prefix.trim(), MAX_SUGGESTIONS);
     }
 
+    @CacheEvict(value = "autocomplete", allEntries = true)
     public void recordQuery(String query) {
         if (query == null || query.trim().isEmpty()) {
             return;
@@ -85,10 +118,17 @@ public class AutocompleteService {
 
         String normalizedQuery = query.trim().toLowerCase();
 
-        trie.incrementFrequency(normalizedQuery);
+        // Trie에 단어 없으면 추가
+        if (!queryFrequencyMap.containsKey(normalizedQuery)) {
+            trie.insert(normalizedQuery, 1);
+            queryFrequencyMap.put(normalizedQuery, 1);
+            log.debug("Added new query to Trie: {}", normalizedQuery);
+        } else {
+            trie.incrementFrequency(normalizedQuery);
+            queryFrequencyMap.merge(normalizedQuery, 1, Integer::sum);
+        }
 
-        queryFrequencyMap.merge(normalizedQuery, 1, Integer::sum);
-
+        // Redis에 빈도수 저장
         String key = QUERY_FREQUENCY_KEY + normalizedQuery;
         redisTemplate.opsForValue().increment(key, 1);
 
